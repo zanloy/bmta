@@ -7,7 +7,6 @@ import os
 import re
 import signal
 
-from aiosmtpd.controller import Controller
 from aiosmtpd.smtp import SMTP
 from contextlib import suppress
 from functools import partial
@@ -80,16 +79,16 @@ class MailHandler:
 if __name__ == "__main__":
     # Setup config vals
     parser = argparse.ArgumentParser(description='BIP Mail Transfer Agent')
-    parser.add_argument('-h', '--host', default=os.environ.get('BMTA_HOST', 'smtp.va.gov'), help='upstream SMTP host to forward emails to')
+    parser.add_argument('-s', '--server', default=os.environ.get('BMTA_SERVER', 'smtp.va.gov'), help='upstream SMTP host to forward emails to')
     parser.add_argument('-p', '--port', default=os.environ.get('BMTA_PORT', 25), help='upstream SMTP port to forward emails to')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG)
     loop = asyncio.get_event_loop()
-    handler = MailHandler(args.host, args.port)
-    factory = partial(SMTP, handler, decode_data=True)
+    handler = MailHandler(args.server, args.port)
+    factory = partial(SMTP, handler, decode_data=True, hostname='bmta', ident='v1.0')
     try:
-        server = loop.create_server(factory, host='localhost', port=8025)
+        server = loop.create_server(factory, host='localhost', port=2525)
         server_loop = loop.run_until_complete(server)
     except RuntimeError:
         raise
