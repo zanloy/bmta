@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import signal
+import sys
 
 from aiosmtpd.smtp import SMTP
 from contextlib import suppress
@@ -42,24 +43,25 @@ class MailHandler:
                     match = match.upper()
                     envelope.content += f'\r\n{match}: https://vajira.max.gov/browse/{match}'
         # Forward our email
-        await asyncio.sleep(15)
-        with SMTPClient(self.host, self.port) as client:
-            try:
+        try:
+            with SMTPClient(self.host, self.port) as client:
                 client.sendmail(
                     from_addr=envelope.mail_from,
                     to_addrs=envelope.rcpt_tos,
                     msg=envelope.content
                 )
-            except SMTPDataError:
-                return '451 Upstream SMTP Server Refused Message Data'
-            except SMTPHeloError:
-                return '451 Upstream SMTP Server Returned Invalid HELO response'
-            except SMTPNotSupportedError:
-                return '451 Upstream SMTP Server Refused SMTPUTF8'
-            except SMTPRecipientsRefused:
-                return '451 Recipients Refused By Upstream SMTP Server'
-            except SMTPSenderRefused:
-                return '451 Upstream SMTP Server Refused Sender Value'
+        except ConnectionRefusedError:
+            return '451 Upstream SMTP Server Refused Our Connection'
+        except SMTPDataError:
+            return '451 Upstream SMTP Server Refused Message Data'
+        except SMTPHeloError:
+            return '451 Upstream SMTP Server Returned Invalid HELO response'
+        except SMTPNotSupportedError:
+            return '451 Upstream SMTP Server Refused SMTPUTF8'
+        except SMTPRecipientsRefused:
+            return '451 Recipients Refused By Upstream SMTP Server'
+        except SMTPSenderRefused:
+            return '451 Upstream SMTP Server Refused Sender Value'
         return '250 Message Accepted For Delivery'
 
     def filter_ip(self, ip):
@@ -83,24 +85,26 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--port', default=os.environ.get('BMTA_PORT', 25), help='upstream SMTP port to forward emails to')
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG)
-    loop = asyncio.get_event_loop()
+    logging.basicConfig(
+        format='%(asctime)s :: %(levelname)s :: %(module)s :: %(message)s',
+        level=logging.INFO,
+        stream=sys.stdout,
+    )
     handler = MailHandler(args.server, args.port)
     factory = partial(SMTP, handler, decode_data=True, hostname='bmta', ident='v1.0')
-    try:
-        server = loop.create_server(factory, host='localhost', port=2525)
-        server_loop = loop.run_until_complete(server)
-    except RuntimeError:
-        raise
+
+    loop = asyncio.get_event_loop()
     with suppress(NotImplementedError):
         loop.add_signal_handler(signal.SIGINT, loop.stop)
-    print('Starting asyncio loop')
     try:
+        server = loop.create_server(factory, port=2525)
+        server_loop = loop.run_until_complete(server)
+        logging.info('Starting asyncio loop. Ready for connections.')
         loop.run_forever()
     except KeyboardInterrupt:
-        print('Received Interrupt... closing...')
-        pass
-    server_loop.close()
-    print('Stopping asyncio loop')
-    loop.run_until_complete(server_loop.wait_closed())
-    loop.close()
+        logging.info('Received Interupt Signal. Shutting down service.')
+    finally:
+        server_loop.close()
+        logging.info('Stopping asyncio loop.')
+        loop.run_until_complete(server_loop.wait_closed())
+        loop.close()
